@@ -4,7 +4,7 @@ FROM python:3.10-slim
 # Working directory set karo
 WORKDIR /app
 
-# FFmpeg, Git aur Node.js (Zaroori hai YouTube fix ke liye)
+# Node.js install karna zaroori hai
 RUN apt-get update && \
     apt-get install -y ffmpeg git nodejs && \
     apt-get clean
@@ -18,5 +18,6 @@ COPY . .
 
 # Bot start karo
 CMD ["python", "main.py"]
+
 
 
