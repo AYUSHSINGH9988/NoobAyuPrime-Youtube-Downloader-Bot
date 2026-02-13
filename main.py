@@ -3,7 +3,9 @@ import time
 import asyncio
 import yt_dlp
 import shutil
-from pyrogram import Client, filters, enums
+import uuid
+from aiohttp import web
+from pyrogram import Client, filters, enums, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 
 # ==========================================
@@ -12,18 +14,32 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-# Dump Channel ID (e.g., -100123456789)
 DUMP_CHANNEL = int(os.environ.get("DUMP_CHANNEL", "0"))
+PORT = int(os.environ.get("PORT", "8000"))
 
 # ==========================================
-#          GLOBAL QUEUE SYSTEM
+#          GLOBAL STORAGE
 # ==========================================
-# Format: {"link": url, "quality": "720", "user_id": 123, "msg": message_object}
 TASK_QUEUE = []
 IS_WORKING = False
+# URL Store (To fix BUTTON_DATA_INVALID error)
+URL_STORE = {} 
 
 app = Client("yt_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# ==========================================
+#          WEB SERVER (For Koyeb Health Check)
+# ==========================================
+async def web_server():
+    async def handle(request):
+        return web.Response(text="Bot is Running!")
+
+    server = web.Application()
+    server.router.add_get("/", handle)
+    runner = web.AppRunner(server)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    print(f"✅ Web Server started on Port {PORT}")
 
 # ==========================================
 #          HELPER FUNCTIONS
@@ -38,26 +54,6 @@ def humanbytes(size):
         n += 1
     return str(round(size, 2)) + " " + dic[n] + 'B'
 
-async def progress_bar(current, total, status_msg, start_time):
-    try:
-        now = time.time()
-        # Update every 5 seconds only
-        if (now - start_time) % 5 == 0 or current == total:
-            percentage = current * 100 / total
-            speed = current / (now - start_time) if (now - start_time) > 0 else 0
-            eta = (total - current) / speed if speed > 0 else 0
-            
-            text = f"""
-Downloading... 📥
-📊 <b>Progress:</b> {round(percentage, 2)}%
-💾 <b>Size:</b> {humanbytes(current)} / {humanbytes(total)}
-🚀 <b>Speed:</b> {humanbytes(speed)}/s
-⏳ <b>ETA:</b> {round(eta)} sec
-"""
-            await status_msg.edit_text(text)
-    except:
-        pass
-
 # ==========================================
 #          WORKER (PROCESSES QUEUE)
 # ==========================================
@@ -67,7 +63,6 @@ async def worker():
     IS_WORKING = True
 
     while TASK_QUEUE:
-        # 1. Get Task
         task = TASK_QUEUE.pop(0)
         url = task["link"]
         quality = task["quality"]
@@ -77,12 +72,11 @@ async def worker():
         try:
             status_msg = await msg.reply_text(f"⏳ <b>Starting Task...</b>\nQueue Left: {len(TASK_QUEUE)}")
             
-            # 2. Download Logic
+            # Download Logic
             await status_msg.edit_text("📥 <b>Downloading from YouTube...</b>")
             
             cookie_path = "cookies.txt" if os.path.exists("cookies.txt") else None
             
-            # Format Selection
             if quality == "mp3":
                 fmt = 'bestaudio/best'
             else:
@@ -94,13 +88,12 @@ async def worker():
                 'noplaylist': True,
                 'cookiefile': cookie_path,
                 'writethumbnail': True,
-                # New Android Client to fix n-token errors
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+                # Fix for n-challenge (requires Node.js installed in Dockerfile)
+                'nocheckcertificate': True,
             }
 
             loop = asyncio.get_running_loop()
             
-            # Run Download in Executor to avoid blocking
             def download_video():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
@@ -108,23 +101,20 @@ async def worker():
 
             file_path, title = await loop.run_in_executor(None, download_video)
 
-            # 3. Upload Logic
+            # Upload Logic
             await status_msg.edit_text("☁️ <b>Uploading to Telegram...</b>")
             
             thumb_path = f"{file_path}.jpg"
             thumb = thumb_path if os.path.exists(thumb_path) else None
-            
             caption = f"🎬 <b>{title}</b>\nRequested by: {user_mention}"
             
-            # Upload to Dump Channel or User
             target_id = DUMP_CHANNEL if DUMP_CHANNEL != 0 else msg.chat.id
             
             if quality == "mp3":
-                 sent = await app.send_audio(target_id, file_path, caption=caption, thumb=thumb)
+                 await app.send_audio(target_id, file_path, caption=caption, thumb=thumb)
             else:
-                 sent = await app.send_video(target_id, file_path, caption=caption, thumb=thumb, supports_streaming=True)
+                 await app.send_video(target_id, file_path, caption=caption, thumb=thumb, supports_streaming=True)
             
-            # If uploaded to Dump, notify user
             if DUMP_CHANNEL != 0:
                 await status_msg.edit_text(f"✅ <b>Done!</b>\nSent to Dump Channel.")
             else:
@@ -135,11 +125,13 @@ async def worker():
             if thumb and os.path.exists(thumb): os.remove(thumb)
 
         except Exception as e:
-            await msg.reply_text(f"❌ Error: {str(e)}")
+            try: await msg.reply_text(f"❌ Error: {str(e)}")
+            except: pass
         
-        # 4. ONE MINUTE DELAY (Cool-down)
+        # 60 Second Delay
         if TASK_QUEUE:
-            await msg.reply_text("💤 <b>Cooling down for 60 seconds...</b>")
+            try: await msg.reply_text("💤 <b>Cooling down for 60 seconds...</b>")
+            except: pass
             await asyncio.sleep(60)
 
     IS_WORKING = False
@@ -149,32 +141,34 @@ async def worker():
 # ==========================================
 
 @app.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text("👋 <b>Send me a YouTube Link!</b>\nI support Playlists & Quality Selection.")
+async def start_handler(client, message):
+    await message.reply_text("👋 <b>Send me a YouTube Link!</b>")
 
 @app.on_message(filters.regex(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\/(?:watch\?v=|embed\/|v\/|shorts\/|playlist\?list=)?([\w\-]+)"))
 async def process_link(client, message):
     url = message.text.strip()
     
-    # Check if Playlist
+    # Generate Short ID for URL to fix BUTTON_DATA_INVALID
+    url_id = str(uuid.uuid4())[:8]
+    URL_STORE[url_id] = url
+
+    # Clean old IDs (simple limit)
+    if len(URL_STORE) > 1000: URL_STORE.clear()
+    
     if "playlist" in url:
         buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Download Entire Playlist (Best Quality)", callback_data=f"plist|{url}")]
+            [InlineKeyboardButton("📥 Download Playlist", callback_data=f"plist|{url_id}")]
         ])
-        await message.reply_text(f"📂 <b>Playlist Detected!</b>\nSelect action:", reply_markup=buttons)
+        await message.reply_text(f"📂 <b>Playlist Detected!</b>", reply_markup=buttons)
     else:
-        # Single Video
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("1080p", callback_data=f"add|1080|{url}"),
-                InlineKeyboardButton("720p", callback_data=f"add|720|{url}")
+                InlineKeyboardButton("1080p", callback_data=f"add|1080|{url_id}"),
+                InlineKeyboardButton("720p", callback_data=f"add|720|{url_id}")
             ],
             [
-                InlineKeyboardButton("480p", callback_data=f"add|480|{url}"),
-                InlineKeyboardButton("360p", callback_data=f"add|360|{url}")
-            ],
-            [
-                InlineKeyboardButton("🎵 MP3 (Audio)", callback_data=f"add|mp3|{url}")
+                InlineKeyboardButton("480p", callback_data=f"add|480|{url_id}"),
+                InlineKeyboardButton("🎵 Audio", callback_data=f"add|mp3|{url_id}")
             ]
         ])
         await message.reply_text("🎥 <b>Select Quality:</b>", reply_markup=buttons)
@@ -183,29 +177,28 @@ async def process_link(client, message):
 async def callback(client, cb):
     data = cb.data.split("|")
     action = data[0]
+    url_id = data[2]
     
+    # Retrieve URL from Short ID
+    url = URL_STORE.get(url_id)
+    if not url:
+        await cb.answer("❌ Link Expired!", show_alert=True)
+        return
+
     if action == "add":
         quality = data[1]
-        url = data[2] # Note: Simple split might break if URL has |, but YT links usually don't.
-        
         TASK_QUEUE.append({
             "link": url,
             "quality": quality,
             "msg": cb.message,
             "user_mention": cb.from_user.mention
         })
-        
-        await cb.answer(f"✅ Added to Queue! Position: {len(TASK_QUEUE)}")
-        await cb.message.edit_text(f"✅ <b>Queued!</b>\nQuality: {quality}\nWaiting for turn...")
-        
-        # Trigger Worker
+        await cb.answer(f"✅ Added to Queue!")
+        await cb.message.edit_text(f"✅ <b>Queued!</b>\nQuality: {quality}")
         asyncio.create_task(worker())
 
     elif action == "plist":
-        url = data[1]
-        await cb.message.edit_text("🔄 <b>Processing Playlist... This may take time.</b>")
-        
-        # Extract Playlist Links
+        await cb.message.edit_text("🔄 <b>Fetching Playlist...</b>")
         try:
             ydl_opts = {'extract_flat': True, 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -216,21 +209,27 @@ async def callback(client, cb):
                         vid_url = f"https://www.youtube.com/watch?v={entry['id']}"
                         TASK_QUEUE.append({
                             "link": vid_url,
-                            "quality": "720", # Default for playlist
+                            "quality": "720",
                             "msg": cb.message,
                             "user_mention": cb.from_user.mention
                         })
                         count += 1
-                    
-                    await cb.message.edit_text(f"✅ <b>{count} Videos Added to Queue!</b>")
+                    await cb.message.edit_text(f"✅ <b>{count} Videos Added!</b>")
                     asyncio.create_task(worker())
         except Exception as e:
-            await cb.message.edit_text(f"❌ Playlist Error: {e}")
+            await cb.message.edit_text(f"❌ Error: {e}")
 
 # ==========================================
-#          RUN
+#          STARTUP
 # ==========================================
+async def main():
+    print("🤖 Bot Starting...")
+    await app.start()
+    print("✅ Bot Started!")
+    await web_server() # Start Web Server for Koyeb
+    await idle()
+    await app.stop()
+
 if __name__ == "__main__":
-    print("🤖 YouTube Bot Started...")
-    app.run()
-      
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
