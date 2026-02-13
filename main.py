@@ -12,7 +12,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 #          CONFIG
 # ==========================================
 API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
+API_HASH = os.environ.get("API_HASH"))
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DUMP_CHANNEL = int(os.environ.get("DUMP_CHANNEL", "0"))
 PORT = int(os.environ.get("PORT", "8000"))
@@ -59,29 +59,28 @@ async def worker():
             status_msg = await msg.reply_text(f"⏳ <b>Starting...</b>\nQueue: {len(TASK_QUEUE)}")
             await status_msg.edit_text("📥 <b>Downloading...</b>")
             
-            # --- Format Logic ---
+            # Cookies File Check
+            if not os.path.exists("cookies.txt"):
+                await status_msg.edit_text("❌ <b>Error:</b> cookies.txt not found!\nUpload cookies.txt to root folder.")
+                IS_WORKING = False
+                return
+
+            # Format Logic
             if quality == "mp3":
                 fmt = 'bestaudio/best'
             else:
-                # Force standard mp4 video
-                fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+                fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
 
-            # --- Critical Options ---
+            # --- Standard Client with Cookies ---
             ydl_opts = {
                 'format': fmt,
                 'outtmpl': '%(title)s.%(ext)s',
                 'noplaylist': True,
+                'cookiefile': 'cookies.txt',  # Must use cookies
                 'writethumbnail': True,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
-                # Cookies disable kiye taaki Android Client chale
-                'cookiefile': None, 
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web'],
-                        'skip': ['dash', 'hls']
-                    }
-                }
+                # No 'android' client args here - using default Web client with Cookies
             }
 
             loop = asyncio.get_running_loop()
@@ -94,7 +93,7 @@ async def worker():
             file_path, title = await loop.run_in_executor(None, download_video)
 
             if not file_path or not os.path.exists(file_path):
-                raise Exception("Download Failed! Format issue.")
+                raise Exception("Download Failed! Check Cookies.")
 
             # Upload
             await status_msg.edit_text("☁️ <b>Uploading...</b>")
@@ -122,10 +121,7 @@ async def worker():
             try: await msg.reply_text(f"❌ Error: {str(e)}")
             except: pass
         
-        # 60 Sec Delay
         if TASK_QUEUE:
-            try: await msg.reply_text("💤 <b>Cooling down (60s)...</b>")
-            except: pass
             await asyncio.sleep(60)
 
     IS_WORKING = False
@@ -142,7 +138,6 @@ async def process_link(client, message):
     url = message.text.strip()
     url_id = str(uuid.uuid4())[:8]
     URL_STORE[url_id] = url
-    if len(URL_STORE) > 500: URL_STORE.clear()
     
     if "playlist" in url:
         btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download Playlist", callback_data=f"plist|{url_id}")]])
@@ -161,9 +156,7 @@ async def callback(client, cb):
     url_id = data[2]
     url = URL_STORE.get(url_id)
     
-    if not url:
-        await cb.answer("❌ Link Expired!", show_alert=True)
-        return
+    if not url: return await cb.answer("Expired!", show_alert=True)
 
     if action == "add":
         quality = data[1]
