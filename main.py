@@ -9,7 +9,7 @@ from pyrogram import Client, filters, enums, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================================
-#          CONFIG (Environment Variables)
+#          CONFIG
 # ==========================================
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
@@ -18,43 +18,30 @@ DUMP_CHANNEL = int(os.environ.get("DUMP_CHANNEL", "0"))
 PORT = int(os.environ.get("PORT", "8000"))
 
 # ==========================================
-#          GLOBAL STORAGE
+#          STORAGE
 # ==========================================
 TASK_QUEUE = []
 IS_WORKING = False
-URL_STORE = {} # Button Error Fix ke liye URL Store
+URL_STORE = {}
 
 app = Client("yt_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ==========================================
-#          WEB SERVER (Koyeb Health Check Fix)
+#          WEB SERVER
 # ==========================================
 async def web_server():
     async def handle(request):
-        return web.Response(text="Bot is Running!")
+        return web.Response(text="Bot is Alive!")
 
     server = web.Application()
     server.router.add_get("/", handle)
     runner = web.AppRunner(server)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    print(f"✅ Web Server started on Port {PORT}")
+    print(f"✅ Web Server running on Port {PORT}")
 
 # ==========================================
-#          HELPER FUNCTIONS
-# ==========================================
-def humanbytes(size):
-    if not size: return "0B"
-    power = 2**10
-    n = 0
-    dic = {0: ' ', 1: 'Ki', 2: 'Mi', 3: 'Gi', 4: 'Ti'}
-    while size > power: 
-        size /= power
-        n += 1
-    return str(round(size, 2)) + " " + dic[n] + 'B'
-
-# ==========================================
-#          WORKER (PROCESSES QUEUE)
+#          WORKER
 # ==========================================
 async def worker():
     global IS_WORKING
@@ -69,28 +56,32 @@ async def worker():
         user_mention = task["user_mention"]
 
         try:
-            status_msg = await msg.reply_text(f"⏳ <b>Starting Task...</b>\nQueue Left: {len(TASK_QUEUE)}")
+            status_msg = await msg.reply_text(f"⏳ <b>Starting...</b>\nQueue: {len(TASK_QUEUE)}")
+            await status_msg.edit_text("📥 <b>Downloading...</b>")
             
-            await status_msg.edit_text("📥 <b>Downloading from YouTube...</b>")
-            
-            cookie_path = "cookies.txt" if os.path.exists("cookies.txt") else None
-            
-            # Format Selection Logic
+            # --- Format Logic ---
             if quality == "mp3":
                 fmt = 'bestaudio/best'
             else:
-                fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best'
+                # Force standard mp4 video
+                fmt = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
 
+            # --- Critical Options ---
             ydl_opts = {
                 'format': fmt,
                 'outtmpl': '%(title)s.%(ext)s',
                 'noplaylist': True,
-                'cookiefile': cookie_path,
                 'writethumbnail': True,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
-                # Fix for Node.js/Android Client
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+                # Cookies disable kiye taaki Android Client chale
+                'cookiefile': None, 
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                        'skip': ['dash', 'hls']
+                    }
+                }
             }
 
             loop = asyncio.get_running_loop()
@@ -103,14 +94,14 @@ async def worker():
             file_path, title = await loop.run_in_executor(None, download_video)
 
             if not file_path or not os.path.exists(file_path):
-                raise Exception("Download Failed! Format not found.")
+                raise Exception("Download Failed! Format issue.")
 
-            # Upload Logic
-            await status_msg.edit_text("☁️ <b>Uploading to Telegram...</b>")
+            # Upload
+            await status_msg.edit_text("☁️ <b>Uploading...</b>")
             
             thumb_path = f"{file_path}.jpg"
             thumb = thumb_path if os.path.exists(thumb_path) else None
-            caption = f"🎬 <b>{title}</b>\nRequested by: {user_mention}"
+            caption = f"🎬 <b>{title}</b>\n👤 {user_mention}"
             
             target_id = DUMP_CHANNEL if DUMP_CHANNEL != 0 else msg.chat.id
             
@@ -120,11 +111,10 @@ async def worker():
                  await app.send_video(target_id, file_path, caption=caption, thumb=thumb, supports_streaming=True)
             
             if DUMP_CHANNEL != 0:
-                await status_msg.edit_text(f"✅ <b>Done!</b>\nSent to Dump Channel.")
+                await status_msg.edit_text(f"✅ <b>Sent to Dump!</b>")
             else:
                 await status_msg.delete()
 
-            # Cleanup
             if os.path.exists(file_path): os.remove(file_path)
             if thumb and os.path.exists(thumb): os.remove(thumb)
 
@@ -132,9 +122,9 @@ async def worker():
             try: await msg.reply_text(f"❌ Error: {str(e)}")
             except: pass
         
-        # 60 Second Delay
+        # 60 Sec Delay
         if TASK_QUEUE:
-            try: await msg.reply_text("💤 <b>Cooling down for 60 seconds...</b>")
+            try: await msg.reply_text("💤 <b>Cooling down (60s)...</b>")
             except: pass
             await asyncio.sleep(60)
 
@@ -143,92 +133,72 @@ async def worker():
 # ==========================================
 #          HANDLERS
 # ==========================================
-
 @app.on_message(filters.command("start"))
 async def start_handler(client, message):
-    await message.reply_text("👋 <b>Send me a YouTube Link!</b>")
+    await message.reply_text("👋 <b>Send YouTube Link!</b>")
 
 @app.on_message(filters.regex(r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\/(?:watch\?v=|embed\/|v\/|shorts\/|playlist\?list=)?([\w\-]+)"))
 async def process_link(client, message):
     url = message.text.strip()
-    
-    # URL Shortener Logic (Ye Button Error fix karega)
     url_id = str(uuid.uuid4())[:8]
     URL_STORE[url_id] = url
-    if len(URL_STORE) > 1000: URL_STORE.clear()
+    if len(URL_STORE) > 500: URL_STORE.clear()
     
     if "playlist" in url:
-        buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📥 Download Playlist", callback_data=f"plist|{url_id}")]
-        ])
-        await message.reply_text(f"📂 <b>Playlist Detected!</b>", reply_markup=buttons)
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📥 Download Playlist", callback_data=f"plist|{url_id}")]])
+        await message.reply_text(f"📂 <b>Playlist Detected!</b>", reply_markup=btn)
     else:
-        buttons = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("1080p", callback_data=f"add|1080|{url_id}"),
-                InlineKeyboardButton("720p", callback_data=f"add|720|{url_id}")
-            ],
-            [
-                InlineKeyboardButton("480p", callback_data=f"add|480|{url_id}"),
-                InlineKeyboardButton("🎵 Audio", callback_data=f"add|mp3|{url_id}")
-            ]
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("1080p", callback_data=f"add|1080|{url_id}"), InlineKeyboardButton("720p", callback_data=f"add|720|{url_id}")],
+            [InlineKeyboardButton("480p", callback_data=f"add|480|{url_id}"), InlineKeyboardButton("🎵 MP3", callback_data=f"add|mp3|{url_id}")]
         ])
-        await message.reply_text("🎥 <b>Select Quality:</b>", reply_markup=buttons)
+        await message.reply_text("🎥 <b>Select Quality:</b>", reply_markup=btn)
 
 @app.on_callback_query()
 async def callback(client, cb):
     data = cb.data.split("|")
     action = data[0]
     url_id = data[2]
-    
-    # ID se wapas URL nikalna
     url = URL_STORE.get(url_id)
+    
     if not url:
         await cb.answer("❌ Link Expired!", show_alert=True)
         return
 
     if action == "add":
         quality = data[1]
-        TASK_QUEUE.append({
-            "link": url,
-            "quality": quality,
-            "msg": cb.message,
-            "user_mention": cb.from_user.mention
-        })
-        await cb.answer(f"✅ Added to Queue!")
-        await cb.message.edit_text(f"✅ <b>Queued!</b>\nQuality: {quality}")
+        TASK_QUEUE.append({"link": url, "quality": quality, "msg": cb.message, "user_mention": cb.from_user.mention})
+        await cb.answer("Added!")
+        await cb.message.edit_text(f"✅ <b>Queued!</b> Quality: {quality}")
         asyncio.create_task(worker())
-
+    
     elif action == "plist":
-        await cb.message.edit_text("🔄 <b>Fetching Playlist...</b>")
+        await cb.message.edit_text("🔄 <b>Fetching...</b>")
         try:
             ydl_opts = {'extract_flat': True, 'quiet': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if 'entries' in info:
-                    count = 0
                     for entry in info['entries']:
-                        vid_url = f"https://www.youtube.com/watch?v={entry['id']}"
                         TASK_QUEUE.append({
-                            "link": vid_url,
+                            "link": f"https://www.youtube.com/watch?v={entry['id']}",
                             "quality": "720",
                             "msg": cb.message,
                             "user_mention": cb.from_user.mention
                         })
-                        count += 1
-                    await cb.message.edit_text(f"✅ <b>{count} Videos Added!</b>")
+                    await cb.message.edit_text(f"✅ <b>Added {len(info['entries'])} Videos!</b>")
                     asyncio.create_task(worker())
         except Exception as e:
             await cb.message.edit_text(f"❌ Error: {e}")
 
 # ==========================================
-#          STARTUP
+#          MAIN
 # ==========================================
 async def main():
     print("🤖 Bot Starting...")
     await app.start()
     print("✅ Bot Started!")
-    await web_server() # Port 8000 Server start
+    await web_server()
     await idle()
     await app.stop()
 
