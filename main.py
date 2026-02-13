@@ -6,7 +6,7 @@ import shutil
 import uuid
 from aiohttp import web
 from pyrogram import Client, filters, enums, idle
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================================
 #          CONFIG (Environment Variables)
@@ -22,13 +22,12 @@ PORT = int(os.environ.get("PORT", "8000"))
 # ==========================================
 TASK_QUEUE = []
 IS_WORKING = False
-# URL Store (To fix BUTTON_DATA_INVALID error)
-URL_STORE = {} 
+URL_STORE = {} # Button Error Fix ke liye URL Store
 
 app = Client("yt_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # ==========================================
-#          WEB SERVER (For Koyeb Health Check)
+#          WEB SERVER (Koyeb Health Check Fix)
 # ==========================================
 async def web_server():
     async def handle(request):
@@ -72,15 +71,15 @@ async def worker():
         try:
             status_msg = await msg.reply_text(f"⏳ <b>Starting Task...</b>\nQueue Left: {len(TASK_QUEUE)}")
             
-            # Download Logic
             await status_msg.edit_text("📥 <b>Downloading from YouTube...</b>")
             
             cookie_path = "cookies.txt" if os.path.exists("cookies.txt") else None
             
+            # Format Selection Logic
             if quality == "mp3":
                 fmt = 'bestaudio/best'
             else:
-                fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
+                fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/bestvideo+bestaudio/best'
 
             ydl_opts = {
                 'format': fmt,
@@ -88,8 +87,10 @@ async def worker():
                 'noplaylist': True,
                 'cookiefile': cookie_path,
                 'writethumbnail': True,
-                # Fix for n-challenge (requires Node.js installed in Dockerfile)
                 'nocheckcertificate': True,
+                'ignoreerrors': True,
+                # Fix for Node.js/Android Client
+                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
             }
 
             loop = asyncio.get_running_loop()
@@ -100,6 +101,9 @@ async def worker():
                     return ydl.prepare_filename(info), info.get("title")
 
             file_path, title = await loop.run_in_executor(None, download_video)
+
+            if not file_path or not os.path.exists(file_path):
+                raise Exception("Download Failed! Format not found.")
 
             # Upload Logic
             await status_msg.edit_text("☁️ <b>Uploading to Telegram...</b>")
@@ -148,11 +152,9 @@ async def start_handler(client, message):
 async def process_link(client, message):
     url = message.text.strip()
     
-    # Generate Short ID for URL to fix BUTTON_DATA_INVALID
+    # URL Shortener Logic (Ye Button Error fix karega)
     url_id = str(uuid.uuid4())[:8]
     URL_STORE[url_id] = url
-
-    # Clean old IDs (simple limit)
     if len(URL_STORE) > 1000: URL_STORE.clear()
     
     if "playlist" in url:
@@ -179,7 +181,7 @@ async def callback(client, cb):
     action = data[0]
     url_id = data[2]
     
-    # Retrieve URL from Short ID
+    # ID se wapas URL nikalna
     url = URL_STORE.get(url_id)
     if not url:
         await cb.answer("❌ Link Expired!", show_alert=True)
@@ -226,7 +228,7 @@ async def main():
     print("🤖 Bot Starting...")
     await app.start()
     print("✅ Bot Started!")
-    await web_server() # Start Web Server for Koyeb
+    await web_server() # Port 8000 Server start
     await idle()
     await app.stop()
 
