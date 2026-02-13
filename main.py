@@ -12,7 +12,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 #          CONFIG
 # ==========================================
 API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH") 
+API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DUMP_CHANNEL = int(os.environ.get("DUMP_CHANNEL", "0"))
 PORT = int(os.environ.get("PORT", "8000"))
@@ -71,25 +71,20 @@ async def worker():
             else:
                 fmt = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best'
 
-            # --- FRIEND'S SETTINGS INTEGRATED HERE ---
+            # --- FIX: REMOVED CONFLICTING HEADERS ---
             ydl_opts = {
                 'format': fmt,
                 'outtmpl': '%(title)s.%(ext)s',
                 'noplaylist': True,
-                'cookiefile': 'cookies.txt', # Fixed syntax (added quotes)
+                'cookiefile': 'cookies.txt',
                 'writethumbnail': True,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
-                # Fake Browser Headers
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                },
-                # Android hata kar Web/iOS use kiya (Bypass Block)
+                # Manual HTTP Headers hata diye hain (Crash Fix)
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['web', 'mweb', 'ios'],
+                        # iOS client sabse stable hai abhi
+                        'player_client': ['ios', 'web', 'mweb'],
                         'skip': ['dash', 'hls']
                     }
                 }
@@ -210,4 +205,3 @@ async def main():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
-          
