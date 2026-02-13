@@ -1,23 +1,25 @@
-# Python ka base image
+# Python Base
 FROM python:3.10-slim
 
-# Working directory set karo
+# Working Directory
 WORKDIR /app
 
-# Node.js install karna zaroori hai
+# Install Node.js (Latest), FFmpeg & Git
 RUN apt-get update && \
-    apt-get install -y ffmpeg git nodejs && \
+    apt-get install -y curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs ffmpeg git && \
     apt-get clean
 
-# Requirements copy karo aur install karo
+# Verify Node.js Install (Log mein dikhega)
+RUN node -v && npm -v
+
+# Install Python Requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Baaki saara code copy karo
+# Copy Code
 COPY . .
 
-# Bot start karo
+# Run Bot
 CMD ["python", "main.py"]
-
-
-
