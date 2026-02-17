@@ -54,24 +54,21 @@ async def worker():
                 fmt = f'bestvideo[height<={quality}]+bestaudio/best/best[height<={quality}]/best'
 
             # --- FIX: HEADERS INITIALIZATION ---
-            ydl_opts = {
-                'format': fmt,
+                        ydl_opts = {
+                'format': 'best', # Sabse pehle 'best' try karega taaki format error na aaye
                 'outtmpl': '%(title)s.%(ext)s',
                 'cookiefile': 'cookies.txt' if os.path.exists("cookies.txt") else None,
                 'noplaylist': True,
                 'quiet': True,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
-                # Fix for 'NoneType' setdefault error
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': '*/*',
-                    'Accept-Language': 'en-US,en;q=0.5',
                 },
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['android', 'ios'],
-                        'player_skip': ['dash', 'hls']
+                        # 'android'/'ios' ko hata diya kyunki wo cookies block kar rahe the
+                        'player_client': ['web', 'mweb'], 
                     }
                 }
             }
