@@ -1,0 +1,6 @@
+python-telegram-bot==21.6
+yt-dlp
+Pillow>=10.0.0
+requests>=2.31.0
+httpx[socks]>=0.27.0
+playwright>=1.44.0
