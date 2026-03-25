@@ -649,7 +649,6 @@ async def start_health():
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", port).start()
     logger.info(f"✅ Health check server on port {port}")
-
 # ══════════════════════════════════════════
 #              MAIN
 # ══════════════════════════════════════════
@@ -661,14 +660,30 @@ async def run():
     # Start health check first (Koyeb needs it)
     await start_health()
 
-    builder=Application.builder().token(BOT_TOKEN)
-    if PROXY_URL: builder=builder.request(HTTPXRequest(proxy=PROXY_URL))
-    app=(builder.read_timeout(60).write_timeout(600).connect_timeout(30).pool_timeout(30).build())
+    builder = Application.builder().token(BOT_TOKEN)
+    
+    # FIX: Agar proxy hai toh timeouts HTTPXRequest ke andar daalne padenge
+    if PROXY_URL: 
+        req = HTTPXRequest(
+            proxy=PROXY_URL, 
+            read_timeout=60, 
+            write_timeout=600, 
+            connect_timeout=30, 
+            pool_timeout=30
+        )
+        builder = builder.request(req)
+    else:
+        # Agar proxy nahi hai toh builder par direct laga sakte hain
+        builder = builder.read_timeout(60).write_timeout(600).connect_timeout(30).pool_timeout(30)
+        
+    app = builder.build()
+    
     app.add_handler(CommandHandler("start",cmd_start))
     app.add_handler(CommandHandler("help",cmd_start))
     app.add_handler(CommandHandler("ping",cmd_ping))
     app.add_handler(MessageHandler(filters.TEXT&~filters.COMMAND,handle_msg))
     app.add_handler(CallbackQueryHandler(handle_cb))
+    
     await app.initialize(); await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
     logger.info("✅ Bot ready!")
@@ -678,3 +693,4 @@ async def run():
 
 if __name__=="__main__":
     asyncio.run(run())
+                
