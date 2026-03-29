@@ -1,3 +1,5 @@
 pyrofork
-TgCrypto
+tgcrypto
 yt-dlp
+requests
+aiohttp
